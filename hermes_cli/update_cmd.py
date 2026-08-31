@@ -3593,6 +3593,7 @@ def _repair_node_deps_on_current_checkout(
     assume_yes: bool = False,
     gateway_mode: bool = False,
     pre_update_snapshot_id: str | None = None,
+    completion_message: str = "✓ Already up to date!",
 ) -> None:
     """Repair Node deps on the ``commit_count == 0`` path (#77211).
 
@@ -3623,7 +3624,7 @@ def _repair_node_deps_on_current_checkout(
         gateway_mode=gateway_mode,
         pre_update_snapshot_id=pre_update_snapshot_id,
     )
-    print_completion("✓ Already up to date!")
+    print_completion(completion_message)
 
 
 def _update_node_dependencies() -> list[str]:
@@ -7667,6 +7668,9 @@ def _cmd_update_impl(args, gateway_mode: bool):
             # not behind, fall through to the up-to-date path.
             commit_count = counted if counted is not None else -1
 
+        # Installed fork updates are checked only against origin. The upstream
+        # remote is for maintainers to synchronize development branches manually.
+        upstream_checked = True
         if commit_count == 0:
             _invalidate_update_cache()
 
@@ -7813,6 +7817,11 @@ def _cmd_update_impl(args, gateway_mode: bool):
                     assume_yes=assume_yes,
                     gateway_mode=gateway_mode,
                     pre_update_snapshot_id=pre_update_snapshot_id,
+                    completion_message=(
+                        "✓ Already up to date!"
+                        if upstream_checked
+                        else "✓ Up to date with your fork (official repo not checked)."
+                    ),
                 )
             if runtime_repaired is not None and not _m()._is_windows():
                 print()
@@ -8282,13 +8291,14 @@ def _cmd_update_impl(args, gateway_mode: bool):
                 "fully quit & relaunch once."
             )
 
-        # NOTE: the macOS TCC interpreter anchor that used to refresh here
-        # (#95131/#95478) is REVERTED: the anchored real-file copy could not
-        # load libpython (LC_RPATH resolved into venv/lib/), bricking every
-        # hermes command on real Macs (#95425), and re-pointed aliases lost
-        # the stdlib (#95541). `hermes doctor` now heals already-anchored
-        # venvs back to symlinks. Re-land requires a dylib-complete design
-        # verified on macOS hardware first.
+        # macOS TCC interpreter anchor (#95596): dylib-complete re-land.
+        # Boot-gated — a failed probe leaves the venv untouched.
+        try:
+            from hermes_cli.macos_tcc_anchor import ensure_tcc_anchor
+
+            ensure_tcc_anchor()
+        except Exception:
+            logger.debug("macOS TCC anchor refresh skipped", exc_info=True)
 
         # ── Post-update state.db integrity guard (#68474) ─────────────────
         # Verify that state.db survived the update intact.  If the live file
